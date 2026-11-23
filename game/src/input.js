@@ -1,99 +1,62 @@
-// Keyboard and pointer input. Held keys give a movement vector; one-shot
-// presses (interact, pause, shop keys, radio) are queued as bit flags and
-// taken once by the loop, so a press between two frames is never lost and
-// never counted twice. The mouse position is kept in screen pixels and the
-// canvas converts it to world aim; clicks queue a fire action.
+// Keyboard + mouse input. Keys are tracked as a live set; edge-triggered actions
+// (E, R, M, P, C, Space) are queued and consumed once per frame by the game loop.
+export const ACTION_CONFIRM = 1, ACTION_PAUSE = 2, ACTION_INTERACT = 4,
+  ACTION_RADIO = 8, ACTION_MUTE = 16, ACTION_CREW = 32, ACTION_PUNCH = 64;
 
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
-export const ACTION_INTERACT = 4;
-export const ACTION_FIRE = 8;
-export const ACTION_RADIO = 16;
-export const ACTION_MUTE = 32;
-export const ACTION_SAVE = 64;
-
-const UP = new Set(['ArrowUp', 'KeyW']);
-const DOWN = new Set(['ArrowDown', 'KeyS']);
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const SPRINT = new Set(['ShiftLeft', 'ShiftRight']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
-const INTERACT = new Set(['KeyE']);
-const RADIO = new Set(['KeyR']);
-const MUTE = new Set(['KeyM']);
-
-export function createInput(target) {
-  const held = new Set();
+export function createInput(canvas) {
+  const keys = new Set();
   let actions = 0;
-  let mouseX = 0;
-  let mouseY = 0;
-  let mouseDown = false;
-  let lastKey = '';
+  let mouseX = 0.5, mouseY = 0.5, mouseDown = false, mouseDownEdge = false;
+  let dragDX = 0;
 
-  function keyDown(event) {
-    held.add(event.code);
-    if (!event.repeat) {
-      lastKey = event.code;
-      if (CONFIRM.has(event.code)) actions |= ACTION_CONFIRM;
-      else if (PAUSE.has(event.code)) actions |= ACTION_PAUSE;
-      else if (INTERACT.has(event.code)) actions |= ACTION_INTERACT;
-      else if (RADIO.has(event.code)) actions |= ACTION_RADIO;
-      else if (MUTE.has(event.code)) actions |= ACTION_MUTE;
-    }
-    if (UP.has(event.code) || DOWN.has(event.code) || LEFT.has(event.code) || RIGHT.has(event.code) || CONFIRM.has(event.code)) {
-      event.preventDefault();
-    }
+  const keyMap = {
+    Enter: ACTION_CONFIRM, Space: ACTION_PUNCH, KeyE: ACTION_INTERACT,
+    KeyP: ACTION_PAUSE, Escape: ACTION_PAUSE, KeyR: ACTION_RADIO,
+    KeyM: ACTION_MUTE, KeyC: ACTION_CREW,
+  };
+  function onKeyDown(e) {
+    if (e.repeat) { keys.add(e.code); return; }
+    keys.add(e.code);
+    if (keyMap[e.code]) actions |= keyMap[e.code];
+    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
   }
-
-  function keyUp(event) {
-    held.delete(event.code);
+  function onKeyUp(e) { keys.delete(e.code); }
+  function onMouseMove(e) {
+    const r = canvas.getBoundingClientRect();
+    mouseX = (e.clientX - r.left) / Math.max(1, r.width);
+    mouseY = (e.clientY - r.top) / Math.max(1, r.height);
   }
-
-  window.addEventListener('keydown', keyDown);
-  window.addEventListener('keyup', keyUp);
-  window.addEventListener('blur', () => held.clear());
-  target.addEventListener('pointermove', (event) => {
-    const rect = target.getBoundingClientRect();
-    mouseX = event.clientX - rect.left;
-    mouseY = event.clientY - rect.top;
-  });
-  target.addEventListener('pointerdown', (event) => {
-    const rect = target.getBoundingClientRect();
-    mouseX = event.clientX - rect.left;
-    mouseY = event.clientY - rect.top;
-    mouseDown = true;
-    actions |= ACTION_FIRE;
-  });
-  window.addEventListener('pointerup', () => {
-    mouseDown = false;
-  });
+  function onMouseDown(e) { mouseDown = true; mouseDownEdge = true; onMouseMove(e); }
+  function onMouseUp() { mouseDown = false; }
+  let lastX = null;
+  function onDrag(e) {
+    if (lastX !== null) dragDX += e.clientX - lastX;
+    lastX = e.clientX;
+  }
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  canvas.addEventListener('mousemove', onMouseMove);
+  canvas.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mouseup', onMouseUp);
+  canvas.addEventListener('mousemove', onDrag);
+  canvas.addEventListener('mouseleave', () => { lastX = null; });
 
   return {
-    /** Movement vector, each component -1, 0 or 1. */
-    move() {
-      return {
-        x: (held.has('ArrowRight') || held.has('KeyD') ? 1 : 0) - (held.has('ArrowLeft') || held.has('KeyA') ? 1 : 0),
-        y: (held.has('ArrowDown') || held.has('KeyS') ? 1 : 0) - (held.has('ArrowUp') || held.has('KeyW') ? 1 : 0),
-      };
+    keys,
+    axis() {
+      // forward/back, strafe/steer: +1 forward, +1 right
+      let f = 0, s = 0;
+      if (keys.has('KeyW') || keys.has('ArrowUp')) f += 1;
+      if (keys.has('KeyS') || keys.has('ArrowDown')) f -= 1;
+      if (keys.has('KeyD') || keys.has('ArrowRight')) s += 1;
+      if (keys.has('KeyA') || keys.has('ArrowLeft')) s -= 1;
+      return { f, s };
     },
-    sprint() {
-      return held.has('ShiftLeft') || held.has('ShiftRight');
-    },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
-    /** The most recent one-shot key code, cleared on read (shop shortcuts). */
-    takeKey() {
-      const key = lastKey;
-      lastKey = '';
-      return key;
-    },
-    mouse() {
-      return { x: mouseX, y: mouseY, down: mouseDown };
-    },
+    sprint() { return keys.has('ShiftLeft') || keys.has('ShiftRight'); },
+    takeActions() { const a = actions; actions = 0; return a; },
+    takeMouseDown() { const d = mouseDownEdge; mouseDownEdge = false; return d; },
+    takeDrag() { const d = dragDX; dragDX = 0; return d; },
+    mouse() { return { x: mouseX, y: mouseY, down: mouseDown }; },
+    clear() { keys.clear(); actions = 0; },
   };
 }

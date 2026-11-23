@@ -1,125 +1,82 @@
-// Procedural sound only: every effect and every radio note is made by the
-// Web Audio API at run time. No audio files, no network. Audio starts on the
-// first user gesture (browsers block it before then) and stays muted until
-// then; M toggles mute, R changes station.
-
-const NOTE = { C2: 65.41, D2: 73.42, E2: 82.41, F2: 87.31, G2: 98.0, A2: 110.0, B2: 123.47, C3: 130.81, E3: 164.81, G3: 196.0, A3: 220.0, B3: 246.94, D3: 146.83 };
-
-// One bassline per station: a slow, loopable pattern of notes and rests.
-const BASSLINES = [
-  [NOTE.C2, 0, NOTE.G2, 0, NOTE.A2, 0, NOTE.F2, NOTE.G2],
-  [NOTE.A2, NOTE.A2, 0, NOTE.C3, 0, NOTE.G2, NOTE.E2, 0],
-  [NOTE.E2, 0, NOTE.E2, NOTE.G2, 0, NOTE.D2, NOTE.D2, 0],
+// Procedural radio: 3 WebAudio stations, no audio files. Each station is a small
+// step-sequencer (bass + lead + hats) with its own scale and tempo. Audio only
+// starts after a user gesture; everything is guarded so a blocked context can
+// never break the game loop.
+export const STATIONS = [
+  { name: 'Tide FM 88.1', desc: 'Delta soul', bpm: 96, scale: [0, 3, 5, 7, 10], base: 110, wave: 'sawtooth' },
+  { name: 'Neon 104', desc: 'Night drive synth', bpm: 122, scale: [0, 2, 3, 7, 9], base: 130.8, wave: 'square' },
+  { name: 'Canal 96.5', desc: 'Lazy reggae', bpm: 76, scale: [0, 4, 5, 7, 11], base: 98, wave: 'triangle' },
 ];
 
 export function createAudio() {
-  let context = null;
-  let master = null;
-  let musicGain = null;
-  let muted = false;
-  let station = 0;
-  let stepTimer = 0;
-  let stepIndex = 0;
-  let nextNoteTime = 0;
+  let ctx = null, master = null, station = 0, muted = false, timer = null, step = 0;
+  let started = false;
 
   function ensure() {
-    if (context) {
-      if (context.state === 'suspended') context.resume().catch(() => {});
-      return true;
-    }
+    if (ctx) return true;
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return false;
-      context = new AC();
-      master = context.createGain();
-      master.gain.value = muted ? 0 : 0.5;
-      master.connect(context.destination);
-      musicGain = context.createGain();
-      musicGain.gain.value = 0.12;
-      musicGain.connect(master);
-      nextNoteTime = context.currentTime + 0.1;
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = muted ? 0 : 0.12;
+      master.connect(ctx.destination);
       return true;
-    } catch {
-      return false;
-    }
+    } catch { return false; }
   }
-
-  function blip(freq, duration, type, volume, when = 0) {
-    if (!context || muted) return;
+  function note(freq, when, dur, type, vol) {
     try {
-      const t = context.currentTime + when;
-      const osc = context.createOscillator();
-      const gain = context.createGain();
-      osc.type = type;
-      osc.frequency.setValueAtTime(freq, t);
-      gain.gain.setValueAtTime(volume, t);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
-      osc.connect(gain);
-      gain.connect(master);
-      osc.start(t);
-      osc.stop(t + duration + 0.02);
-    } catch { /* sound is decoration; never break the game */ }
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.setValueAtTime(vol, when);
+      g.gain.exponentialRampToValueAtTime(0.001, when + dur);
+      o.connect(g); g.connect(master);
+      o.start(when); o.stop(when + dur + 0.02);
+    } catch { /* audio is cosmetic */ }
   }
-
-  function noiseBurst(duration, volume) {
-    if (!context || muted) return;
-    try {
-      const t = context.currentTime;
-      const length = Math.max(1, Math.floor(context.sampleRate * duration));
-      const buffer = context.createBuffer(1, length, context.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < length; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / length);
-      const source = context.createBufferSource();
-      source.buffer = buffer;
-      const gain = context.createGain();
-      gain.gain.value = volume;
-      source.connect(gain);
-      gain.connect(master);
-      source.start(t);
-    } catch { /* ignore */ }
+  function tick() {
+    if (!ctx || muted) return;
+    const st = STATIONS[station];
+    const spb = 60 / st.bpm / 2; // eighth notes
+    const now = ctx.currentTime + 0.05;
+    const deg = st.scale[step % st.scale.length];
+    const f = st.base * Math.pow(2, deg / 12) * (step % 8 === 6 ? 2 : 1);
+    note(f, now, spb * 1.8, st.wave, 0.5);
+    if (step % 2 === 0) note(st.base / 2, now, spb * 1.9, 'sine', 0.9);
+    if (step % 4 === 2) note(st.base * 4, now, 0.05, 'sine', 0.25); // hat tick
+    step += 1;
   }
-
   return {
-    unlock() { ensure(); },
-    setStation(index) { station = index; stepIndex = 0; },
-    setMuted(value) {
-      muted = value;
-      if (master) master.gain.value = muted ? 0 : 0.5;
+    get station() { return station; },
+    get muted() { return muted; },
+    stationName() { return STATIONS[station].name; },
+    unlock() {
+      if (started) return;
+      if (!ensure()) return;
+      started = true;
+      try { ctx.resume(); } catch { /* ignore */ }
+      const st = STATIONS[station];
+      timer = window.setInterval(tick, (60 / st.bpm / 2) * 1000);
     },
-    isMuted() { return muted; },
-    shoot() { noiseBurst(0.09, 0.5); blip(220, 0.07, 'square', 0.25); },
-    punch() { noiseBurst(0.06, 0.3); },
-    crash() { noiseBurst(0.25, 0.5); blip(70, 0.25, 'sawtooth', 0.3); },
-    pickup() { blip(660, 0.09, 'sine', 0.3); blip(990, 0.12, 'sine', 0.3, 0.08); },
-    coin() { blip(880, 0.08, 'sine', 0.25); blip(1320, 0.1, 'sine', 0.25, 0.07); },
-    siren() { blip(700, 0.18, 'sine', 0.12); blip(950, 0.18, 'sine', 0.12, 0.18); },
-    mission() { [523, 659, 784, 1047].forEach((f, i) => blip(f, 0.16, 'triangle', 0.3, i * 0.11)); },
-    fail() { [392, 330, 262].forEach((f, i) => blip(f, 0.2, 'triangle', 0.28, i * 0.13)); },
-    busted() { [220, 196, 165].forEach((f, i) => blip(f, 0.3, 'sawtooth', 0.25, i * 0.2)); },
-    /** Advance the radio bassline; call once per frame with dt. */
-    step(dt) {
-      if (!context || muted) return;
-      stepTimer += dt;
-      if (stepTimer < 0.32) return;
-      stepTimer = 0;
-      const line = BASSLINES[station % BASSLINES.length];
-      const note = line[stepIndex % line.length];
-      stepIndex += 1;
-      if (note > 0) {
-        try {
-          const t = context.currentTime;
-          const osc = context.createOscillator();
-          const gain = context.createGain();
-          osc.type = 'triangle';
-          osc.frequency.setValueAtTime(note, t);
-          gain.gain.setValueAtTime(0.5, t);
-          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-          osc.connect(gain);
-          gain.connect(musicGain);
-          osc.start(t);
-          osc.stop(t + 0.32);
-        } catch { /* ignore */ }
+    nextStation() {
+      station = (station + 1) % STATIONS.length;
+      step = 0;
+      if (timer) { window.clearInterval(timer); timer = null; }
+      if (started && ctx) {
+        const st = STATIONS[station];
+        timer = window.setInterval(tick, (60 / st.bpm / 2) * 1000);
       }
+      return STATIONS[station].name;
     },
+    toggleMute() {
+      muted = !muted;
+      if (master) master.gain.value = muted ? 0 : 0.12;
+      return muted;
+    },
+    beep(freq = 660, dur = 0.08) {
+      if (!started || !ctx || muted) return;
+      try { ctx.resume(); note(freq, ctx.currentTime, dur, 'square', 0.4); } catch { /* ignore */ }
+    },
+    shot() { if (started && ctx && !muted) { try { note(180, ctx.currentTime, 0.12, 'sawtooth', 0.7); } catch { /* ignore */ } } },
   };
 }
