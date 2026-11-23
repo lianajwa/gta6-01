@@ -1,12 +1,15 @@
-// SOLMAR HEAT — a gta6-01 entry (Node 22, standard library only). The game is
-// this directory's game/ folder: plain static files a desktop browser loads
-// offline (game/index.html and its ES modules, no library and no network
-// request). It is a complete open-world crime game in the invented coastal
-// city of Solmar Bay: drive and steal cars, traffic and pedestrians, a 5-star
-// wanted system with police cars, foot cops, roadblocks of attention and a
-// helicopter, 10 story missions, combat, shops, garage upgrades, respect
-// ranks, radio, a minimap HUD and a save system. Put 3 or 4 screenshots in
-// screenshots/ and run it.
+// TIDELINE — Delta Kings (gta6-01 v2): a 3D open-world crime game in Tideline,
+// a river-delta canal city — crew, district standing, staged heists, boats,
+// 10 story missions and a 5-star wanted system. Built fresh in this session.
+// A working gta6-01 entry (Node 22, standard library only): the game is this directory's
+// game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
+// modules, no library and no network request), and the program hands it in. It copies game/ and
+// screenshots/ from beside this file to /output and writes /output/dossier.json, the summary the
+// judge reads, with the vendored make.fun library. Only the plumbing, not an open world: Block
+// Dodger, a plain 2D canvas game where a paddle dodges falling blocks and catches coins, with a
+// title screen, score, lives and levels, game over and restart, flat colours and no sound. Build
+// your own open-world crime game in its place (three.js or any library you vendor under game/),
+// put your 3 or 4 PNG or JPEG screenshots in screenshots/ (the first by name is the cover) and run it.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
