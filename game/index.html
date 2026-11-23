@@ -3,18 +3,146 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:,">
-<title>Solmar Heat — Open-World Crime in Solmar Bay</title>
+<title>TIDELINE — Delta Kings</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e16; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0e2a3a;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
   #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  #hud { position: fixed; inset: 0; pointer-events: none; font-size: 14px; }
+  .panel { position: absolute; background: rgba(8, 20, 30, 0.72); border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 8px; padding: 8px 12px; }
+  #topleft { top: 12px; left: 12px; }
+  #topleft .cash { font-size: 22px; font-weight: 800; color: #7dff9b; }
+  #topleft .rank { font-size: 15px; font-weight: 700; color: #ffd75e; }
+  #topleft .sub { font-size: 12px; opacity: 0.85; }
+  #wanted { position: absolute; top: 12px; right: 12px; font-size: 26px; letter-spacing: 4px; color: #fff;
+    background: rgba(8,20,30,0.72); border: 1px solid rgba(255,255,255,0.25); border-radius: 8px; padding: 4px 12px; }
+  #wanted.hot { color: #ff5b5b; border-color: #ff5b5b; }
+  #objective { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); max-width: 46%;
+    text-align: center; font-weight: 700; background: rgba(8,20,30,0.72); border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 8px; padding: 8px 14px; }
+  #bottomleft { bottom: 12px; left: 12px; width: 220px; }
+  .bar { height: 12px; background: #333; border-radius: 6px; overflow: hidden; margin: 4px 0; }
+  .bar > div { height: 100%; }
+  #health-fill { background: #2ecc71; width: 100%; }
+  #armor-fill { background: #3498db; width: 0%; }
+  #radio { font-size: 12px; opacity: 0.9; margin-top: 4px; }
+  #speedbox { position: absolute; bottom: 224px; right: 12px; text-align: right; font-size: 20px; font-weight: 800;
+    background: rgba(8,20,30,0.72); border: 1px solid rgba(255,255,255,0.25); border-radius: 8px; padding: 6px 12px; }
+  #speedbox .dmg { font-size: 12px; font-weight: 400; color: #ffb15e; }
+  #minimap { position: absolute; bottom: 12px; right: 12px; width: 200px; height: 200px;
+    border: 2px solid rgba(255,255,255,0.5); border-radius: 8px; background: #0e2a3a; }
+  #prompt { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+    background: rgba(8,20,30,0.8); border-radius: 6px; padding: 6px 14px; font-weight: 600; }
+  #flash { position: absolute; top: 84px; left: 50%; transform: translateX(-50%);
+    font-size: 20px; font-weight: 800; color: #ffd75e; text-shadow: 0 2px 6px #000; opacity: 0; }
+  .overlay { position: fixed; inset: 0; display: none; background: rgba(4, 14, 22, 0.78);
+    pointer-events: auto; z-index: 10; }
+  .card { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(620px, 92vw);
+    max-height: 88vh; overflow-y: auto; background: #10283a; border: 2px solid #2a7f9e; border-radius: 12px; padding: 24px; }
+  .card h1 { margin: 0 0 4px; font-size: 34px; color: #ffd75e; letter-spacing: 1px; }
+  .card h2 { margin: 0 0 8px; font-size: 22px; color: #ffd75e; }
+  .card p { line-height: 1.5; opacity: 0.95; }
+  .card button { display: inline-block; margin: 6px 6px 0 0; padding: 10px 18px; font-size: 15px; font-weight: 700;
+    background: #2a7f9e; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
+  .card button:hover { background: #3498db; }
+  .card button:disabled { background: #555; cursor: default; }
+  .card label { display: block; margin: 6px 0; }
+  .card select, .card input[type="text"] { padding: 8px; font-size: 15px; border-radius: 6px; }
+  .crew-row { margin: 10px 0; padding: 10px; background: rgba(255,255,255,0.07); border-radius: 8px; }
+  .keys { font-size: 13px; line-height: 1.7; opacity: 0.9; }
+  #title { display: block; background: linear-gradient(rgba(4,14,22,0.45), rgba(4,14,22,0.85)); }
 </style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
 </head>
 <body>
-<canvas id="game" aria-label="Solmar Heat: an open-world crime game in Solmar Bay. Drive, steal cars, dodge the police, and finish ten story missions."></canvas>
+<canvas id="game" aria-label="Tideline Delta Kings: a 3D open-world crime game"></canvas>
 <p id="status" role="status" aria-live="polite"></p>
+
+<div id="hud">
+  <div id="topleft" class="panel">
+    <div class="cash" id="cash">$200</div>
+    <div class="rank" id="rank">Nobody</div>
+    <div class="sub" id="respect">0 respect</div>
+    <div class="sub" id="district">Marina · standing 10</div>
+  </div>
+  <div id="wanted">☆☆☆☆☆</div>
+  <div id="objective">Welcome to Tideline</div>
+  <div id="flash"></div>
+  <div id="bottomleft" class="panel">
+    <div>HEALTH</div><div class="bar"><div id="health-fill"></div></div>
+    <div>ARMOR</div><div class="bar"><div id="armor-fill"></div></div>
+    <div id="radio">Tide FM 88.1</div>
+  </div>
+  <div id="speedbox"><span id="speed">0 km/h · ON FOOT</span><div class="dmg" id="damage"></div></div>
+  <canvas id="minimap" width="200" height="200"></canvas>
+  <div id="prompt"></div>
+</div>
+
+<div id="title" class="overlay">
+  <div class="card">
+    <h1>TIDELINE</h1>
+    <h2>— Delta Kings —</h2>
+    <p>You wash up in Tideline, a sun-soaked river-delta canal city of bridges, boats, markets and neon — with nothing but a name. The Commodore owns the docks and the cops. Build a crew, win the districts, pull the heists, and take the crown: <b>Delta King</b>.</p>
+    <p>Drive, steal cars, sail the canals by boat, dodge a 5-star wanted level, recruit a crew, and run 10 story missions plus 2 staged heists.</p>
+    <button id="btn-new">New Game</button>
+    <button id="btn-continue">Continue</button>
+    <button id="btn-help">Controls</button>
+    <p class="keys">WASD move / drive · Shift sprint · E enter, steal, board, use shop · Click shoot · Space punch · C crew · R radio · M mute · P pause</p>
+  </div>
+</div>
+
+<div id="help" class="overlay"><div class="card">
+  <h2>Controls</h2>
+  <p class="keys">WASD / arrows — move on foot, drive, sail<br>Shift — sprint<br>E — enter / steal a car, board a boat, use a shop, get out<br>Click — shoot the pistol toward the mouse · Space — punch<br>1–9 — shop buttons when a shop is open<br>C — crew panel · R — change radio · M — mute<br>P / Esc — pause (S save, Q quit to title)</p>
+  <button id="btn-help-close">Close</button>
+</div></div>
+
+<div id="pause" class="overlay"><div class="card">
+  <h2>Paused</h2>
+  <p>Tideline waits. The tide does not.</p>
+  <button id="btn-resume">Resume</button>
+  <button id="btn-save">Save Game</button>
+  <button id="btn-quit">Quit to Title</button>
+</div></div>
+
+<div id="shop" class="overlay"><div class="card">
+  <h2 id="shop-title">Shop</h2>
+  <p id="shop-desc"></p>
+  <p id="shop-discount"></p>
+  <div id="shop-items"></div>
+  <button id="btn-shop-close">Leave (Esc)</button>
+</div></div>
+
+<div id="crew-panel" class="overlay"><div class="card">
+  <h2>Your Crew</h2>
+  <p>Four specialists. Recruit them through the story, then send them on side jobs for cash while you work.</p>
+  <div id="crew-list"></div>
+  <button id="btn-crew-close">Close (C)</button>
+</div></div>
+
+<div id="heist-plan" class="overlay"><div class="card">
+  <h2 id="heist-title">Plan the Heist</h2>
+  <p id="heist-desc"></p>
+  <label><input type="radio" name="approach" value="loud" checked> LOUD — more enemies, wanted from the start</label>
+  <label><input type="radio" name="approach" value="quiet"> QUIET — needs Juno (Hacker), starts cold, +$500 bonus</label>
+  <p><b>Crew on the job:</b></p>
+  <div id="heist-crew"></div>
+  <p><b>Getaway vehicle:</b>
+  <select id="heist-getaway"><option value="car">Car</option><option value="boat">Boat (canal escape)</option></select></p>
+  <button id="btn-heist-start">Start the Heist</button>
+  <button id="btn-heist-cancel">Cancel</button>
+</div></div>
+
+<div id="over" class="overlay"><div class="card">
+  <h2 id="over-title">WASTED</h2>
+  <p id="over-text"></p>
+  <button id="btn-over">Get back up</button>
+</div></div>
+
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
