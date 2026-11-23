@@ -1,116 +1,110 @@
-// HUD: DOM readouts (cash, rank, wanted stars, health/armor, speed, objective,
-// radio, district) plus a live 2D minimap canvas showing districts, roads,
-// water, shops, the mission beacon, the player, police and crew.
-import { DISTRICTS, ROADS, WORLD, rankFor } from './config.js';
-
-function el(id) { return document.getElementById(id); }
-
+// hud.js: the HUD — cash, health, respect, wanted stars, radio, objective —
+// plus a live minimap drawn on a 2D canvas every frame. The wanted stars are
+// redrawn EVERY frame from the live value: updating them only on change left
+// them stale in an earlier build (a real bug caught in the screenshot pass).
 export function createHud() {
-  const minimap = el('minimap');
-  const mctx = minimap ? minimap.getContext('2d') : null;
-  let flashTimer = 0;
-  let flashMsg = '';
+  const el = (id) => document.getElementById(id);
+  const root = document.createElement('div');
+  root.id = 'hud';
+  root.innerHTML = `
+    <div id="hud-top">
+      <div id="hud-stars" aria-label="wanted level"></div>
+      <div id="hud-cash">$0</div>
+      <div id="hud-rank">Nobody</div>
+    </div>
+    <div id="hud-health"><div id="hud-health-bar"></div><span id="hud-health-num">100</span></div>
+    <div id="hud-objective"></div>
+    <div id="hud-trial"></div>
+    <div id="hud-radio">DELTA FM</div>
+    <div id="hud-hint"></div>
+    <div id="hud-toast"></div>
+    <canvas id="minimap" width="180" height="180"></canvas>
+    <div id="hud-district">Tideline</div>
+  `;
+  document.body.appendChild(root);
+  const mm = el('minimap').getContext('2d');
 
-  function stars(n) {
-    const full = Math.ceil(n);
-    let s = '';
-    for (let i = 0; i < 5; i++) s += i < full ? '★' : '☆';
-    return s;
-  }
-  function update(G) {
-    const s = G.state;
-    const set = (id, v) => { const e = el(id); if (e) e.textContent = v; };
-    set('cash', `$${s.cash}`);
-    set('rank', rankFor(s.respect));
-    set('respect', `${s.respect} respect`);
-    const w = el('wanted');
-    if (w) { w.textContent = stars(s.wanted); w.className = s.wanted > 0 ? 'wanted hot' : 'wanted'; }
-    const hb = el('health-fill'); if (hb) hb.style.width = `${Math.max(0, s.health)}%`;
-    const ab = el('armor-fill'); if (ab) ab.style.width = `${Math.max(0, s.armor)}%`;
-    const sp = s.player.vehicle
-      ? Math.round(Math.abs(s.player.vehicle.speed || 0) * 3.6) : Math.round(s.player.speed * 3.6);
-    set('speed', s.player.vehicle ? `${sp} km/h · ${s.player.vehicle.type === 'boat' ? 'BOAT' : 'CAR'}` : `${sp} km/h · ON FOOT`);
-    set('objective', G.missions.objectiveText(G));
-    const d = G.districts.at(s.player.x, s.player.z);
-    set('district', `${d.name} · standing ${G.districts.get(d.id)}`);
-    set('radio', `${G.audio.stationName()}${G.audio.muted ? ' (muted)' : ''}`);
-    const dmg = s.player.vehicle ? Math.round(s.player.vehicle.damage || 0) : 0;
-    set('damage', s.player.vehicle ? `Damage ${dmg}%` : '');
-    if (flashTimer > 0) {
-      flashTimer -= 1 / 60;
-      const f = el('flash');
-      if (f) { f.textContent = flashMsg; f.style.opacity = Math.min(1, flashTimer).toFixed(2); }
+  let toastT = 0;
+  let lastStars = -1;
+
+  function drawMinimap(world) {
+    const W = 180, S = 560;
+    const to = (x, z) => [((x + S / 2) / S) * W, ((z + S / 2) / S) * W];
+    mm.fillStyle = 'rgba(10, 14, 26, 0.82)';
+    mm.fillRect(0, 0, W, W);
+    // Water: canals + marina basin.
+    mm.fillStyle = '#27354d';
+    for (const c of world.canals) {
+      const [x1, y1] = to(-280, c.z - c.w / 2);
+      const [x2, y2] = to(280, c.z + c.w / 2);
+      mm.fillRect(x1, y1, x2 - x1, y2 - y1);
     }
-    drawMinimap(G);
-  }
-  function drawMinimap(G) {
-    if (!mctx) return;
-    const S = 200, scale = S / WORLD.size;
-    const toMap = (x, z) => [(x + WORLD.half) * scale, (z + WORLD.half) * scale];
-    mctx.clearRect(0, 0, S, S);
-    // Districts.
-    for (const d of DISTRICTS) {
-      mctx.fillStyle = d.color + '44';
-      const [x0, y0] = toMap(d.x0, d.z0);
-      mctx.fillRect(x0, y0, (d.x1 - d.x0) * scale, (d.z1 - d.z0) * scale);
-    }
-    // Water: the two canals (centred on x=30 / z=30) and the Marina basin.
-    mctx.fillStyle = '#2a7f9e';
-    mctx.fillRect(0, (30 - 12 + WORLD.half) * scale, S, 24 * scale);
-    mctx.fillRect((30 - 12 + WORLD.half) * scale, 0, 24 * scale, S);
-    mctx.fillRect(toMap(-120, 200)[0], toMap(-120, 200)[1], 240 * scale, 40 * scale);
     // Roads.
-    mctx.strokeStyle = '#666'; mctx.lineWidth = 2;
-    for (const r of ROADS) {
-      const [x] = toMap(r, 0);
-      mctx.beginPath(); mctx.moveTo(x, 0); mctx.lineTo(x, S); mctx.stroke();
-      const [, y] = toMap(0, r);
-      mctx.beginPath(); mctx.moveTo(0, y); mctx.lineTo(S, y); mctx.stroke();
+    mm.strokeStyle = '#5a5560';
+    mm.lineWidth = 2;
+    for (const r of world.roads) {
+      const [x1, y1] = to(r.x1, r.z1);
+      const [x2, y2] = to(r.x2, r.z2);
+      mm.beginPath(); mm.moveTo(x1, y1); mm.lineTo(x2, y2); mm.stroke();
     }
-    // Shops.
-    for (const sh of G.city.shopMeshes) {
-      const [x, y] = toMap(sh.x, sh.z);
-      mctx.fillStyle = sh.color;
-      mctx.fillRect(x - 3, y - 3, 6, 6);
+    // Trial buoys.
+    mm.fillStyle = '#ff8c42';
+    for (const b of world.trialBuoys) {
+      const [x, y] = to(b.x, b.z);
+      mm.beginPath(); mm.arc(x, y, 3.5, 0, Math.PI * 2); mm.fill();
     }
-    // Mission beacon.
-    const b = G.missions.beaconPos(G);
-    if (b) {
-      const [x, y] = toMap(b.x, b.z);
-      mctx.fillStyle = '#ffff00';
-      mctx.beginPath(); mctx.arc(x, y, 6 + Math.sin(performance.now() * 0.006) * 2, 0, Math.PI * 2); mctx.fill();
+    // Mission marker: pulsing yellow diamond.
+    if (world.mission) {
+      const [x, y] = to(world.mission.x, world.mission.z);
+      const p = 1 + Math.sin(performance.now() * 0.006) * 0.25;
+      mm.fillStyle = '#ffe14d';
+      mm.save();
+      mm.translate(x, y); mm.rotate(Math.PI / 4); mm.scale(p, p);
+      mm.fillRect(-4, -4, 8, 8);
+      mm.restore();
     }
-    // Police blips (flashing red/blue).
-    const police = G.police;
-    mctx.fillStyle = Math.floor(performance.now() / 300) % 2 === 0 ? '#ff0000' : '#0000ff';
-    for (const c of police.cars) { const [x, y] = toMap(c.x, c.z); mctx.fillRect(x - 3, y - 3, 6, 6); }
-    for (const c of police.cops) { const [x, y] = toMap(c.x, c.z); mctx.fillRect(x - 2, y - 2, 4, 4); }
-    // Crew (green dots).
-    for (const m of G.crew.members) {
-      if (!m.recruited || m.onJob || !m.mesh) continue;
-      const [x, y] = toMap(m.x, m.z);
-      mctx.fillStyle = '#2ecc71';
-      mctx.beginPath(); mctx.arc(x, y, 3, 0, Math.PI * 2); mctx.fill();
+    // Police dots.
+    mm.fillStyle = '#4d8dff';
+    for (const c of world.cops) {
+      const [x, y] = to(c.x, c.z);
+      mm.beginPath(); mm.arc(x, y, 2.5, 0, Math.PI * 2); mm.fill();
     }
-    // Player arrow.
-    const s = G.state;
-    const [px, py] = toMap(s.player.x, s.player.z);
-    mctx.save();
-    mctx.translate(px, py);
-    mctx.rotate(Math.atan2(Math.sin(s.player.heading), Math.cos(s.player.heading)));
-    mctx.fillStyle = '#ffffff';
-    mctx.beginPath(); mctx.moveTo(0, -7); mctx.lineTo(5, 6); mctx.lineTo(-5, 6); mctx.closePath(); mctx.fill();
-    mctx.restore();
+    // Player arrow, rotated to heading.
+    const [px, py] = to(world.player.x, world.player.z);
+    mm.save();
+    mm.translate(px, py);
+    mm.rotate(Math.atan2(Math.sin(world.player.heading), Math.cos(world.player.heading)) + Math.PI);
+    mm.fillStyle = '#ffffff';
+    mm.beginPath(); mm.moveTo(0, -6); mm.lineTo(4.5, 5); mm.lineTo(-4.5, 5); mm.closePath(); mm.fill();
+    mm.restore();
   }
-  function flash(msg) { flashMsg = msg; flashTimer = 3; }
-  function setPrompt(text) {
-    const p = el('prompt');
-    if (p) p.textContent = text || '';
-  }
-  function show(id) { const e = el(id); if (e) e.style.display = 'block'; }
-  function hide(id) { const e = el(id); if (e) e.style.display = 'none'; }
-  function hideAllOverlays() {
-    for (const id of ['title', 'pause', 'shop', 'crew-panel', 'heist-plan', 'over', 'help']) hide(id);
-  }
-  return { update, flash, setPrompt, show, hide, hideAllOverlays, drawMinimap };
+
+  return {
+    root,
+    update(dt, s) {
+      // Stars: redrawn every frame from the live value — never stale.
+      const stars = Math.max(0, Math.min(5, Math.round(s.stars)));
+      if (stars !== lastStars || true) {
+        let html = '';
+        for (let i = 0; i < 5; i++) html += `<span class="star${i < stars ? ' on' : ''}">★</span>`;
+        el('hud-stars').innerHTML = html;
+        lastStars = stars;
+      }
+      el('hud-cash').textContent = `$${Math.floor(s.cash).toLocaleString('en-US')}`;
+      el('hud-rank').textContent = s.rank;
+      // The bar is a fraction of max HP (150 with Muscle), not of 100:
+      // showing raw hp as a percent overflowed the bar past its frame.
+      const hpMax = s.maxHp > 0 ? s.maxHp : 100;
+      el('hud-health-bar').style.width = `${Math.max(0, Math.min(100, (s.hp / hpMax) * 100))}%`;
+      el('hud-health-num').textContent = `${Math.max(0, Math.round(s.hp))}`;
+      el('hud-objective').textContent = s.objective || '';
+      el('hud-trial').textContent = s.trial || '';
+      el('hud-radio').textContent = s.radio || '';
+      el('hud-district').textContent = s.district || '';
+      el('hud-hint').textContent = s.hint || '';
+      if (s.toast) { el('hud-toast').textContent = s.toast; toastT = 3; }
+      if (toastT > 0) { toastT -= dt; if (toastT <= 0) el('hud-toast').textContent = ''; }
+      drawMinimap(s.world);
+    },
+  };
 }

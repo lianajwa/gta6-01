@@ -1,96 +1,153 @@
-// TIDELINE — Delta Kings: world constants, districts, crew, missions, heists, shops.
-// All names, places and story are original inventions for this game.
-export const WORLD = { size: 480, half: 240, roadWidth: 10, canalHalf: 12 };
-export const ROADS = [-180, -120, -60, 0, 60, 120, 180];
-export const STEP = 1 / 60;
+// TIDELINE — Delta Kings: all tuning, world layout and story data in one place.
+// The city is "Tideline", a river-delta canal city at dusk. Everything the other
+// modules need — districts, prices, crew, missions, heists, radio — lives here so
+// a single edit retunes the whole game.
 
+export const WORLD = {
+  size: 560, // playable square, metres; ground plane is a little larger
+  waterLevel: 0.02, // water sits just below the land slabs (0.06) so it only
+  // shows through the canal gaps; roads (0.12) and bridges (0.14) stay dry
+  groundY: 0,
+  seed: 1,
+};
+
+export const DUSK = {
+  skyTop: 0x1d2f66, // deep blue zenith
+  skyHorizon: 0xff8c42, // orange horizon
+  fogColor: 0xe8907a, // rose fog
+  fogNear: 120,
+  fogFar: 520,
+  sunColor: 0xffb36b,
+  sunIntensity: 2.4,
+  sunPosition: [-180, 55, -120],
+  hemiSky: 0x8a7fd0,
+  hemiGround: 0x3a2a22,
+  hemiIntensity: 0.75,
+  ambient: 0x604a55,
+};
+
+// Five districts, each with its own look. x/z are the district centres, r the radius.
 export const DISTRICTS = [
-  { id: 'oldtown', name: 'Old Town', color: '#c9a227', x0: -240, z0: -240, x1: 0, z1: 0, desc: 'Crumbling canalside houses and old money.' },
-  { id: 'market', name: 'Market Row', color: '#2ecc71', x0: 0, z0: -240, x1: 240, z1: 0, desc: 'Stalls, spice and smugglers by daylight.' },
-  { id: 'neon', name: 'Neon Strip', color: '#e84393', x0: 0, z0: 0, x1: 240, z1: 200, desc: 'Casinos, clubs and bright lights.' },
-  { id: 'marina', name: 'Marina', color: '#3498db', x0: -240, z0: 200, x1: 240, z1: 240, desc: 'Boats, docks and the tide coming in.' },
-  { id: 'canal', name: 'Canal Quarter', color: '#9b59b6', x0: -240, z0: 0, x1: 0, z1: 200, desc: 'Bridges, warehouses and quiet water.' },
+  {
+    id: 'oldtown', name: 'Old Town', x: -150, z: -120, r: 95,
+    style: 'terracotta', roof: 'pitched', palette: [0xc96f3f, 0xd98a4e, 0xb45a34, 0xe0a45e],
+    roofColor: 0x8a4a2a, floors: [1, 2], density: 30,
+  },
+  {
+    id: 'market', name: 'Market Row', x: 40, z: -140, r: 90,
+    style: 'midrise', roof: 'flat', palette: [0xe8b13c, 0x4fae8d, 0xd95f4b, 0x5b8dd9, 0xe07ba8],
+    roofColor: 0x5a4a3a, floors: [2, 4], density: 26, stalls: 14,
+  },
+  {
+    id: 'neon', name: 'Neon Strip', x: 160, z: -40, r: 85,
+    style: 'tower', roof: 'stepped', palette: [0x2e3a5c, 0x3a2a55, 0x24344a, 0x4a2a4a],
+    roofColor: 0x1a1a26, floors: [5, 9], density: 20,
+    neon: [0xff2e88, 0x00e5ff, 0xffe14d, 0x7cff5e, 0xff6a00],
+  },
+  {
+    id: 'marina', name: 'Marina', x: 150, z: 130, r: 95,
+    style: 'lowwhite', roof: 'flat', palette: [0xf2ede2, 0xdfe9ef, 0xffffff, 0xcfe0ea],
+    roofColor: 0x7a8a99, floors: [1, 2], density: 24, docks: true,
+  },
+  {
+    id: 'canal', name: 'Canal Quarter', x: -140, z: 130, r: 90,
+    style: 'warehouse', roof: 'gable', palette: [0x9a5a3c, 0x7a4a34, 0xa86a44, 0x8a5a40],
+    roofColor: 0x4a3a2e, floors: [1, 3], density: 26,
+  },
 ];
 
-export function districtAt(x, z) {
-  for (const d of DISTRICTS) if (x >= d.x0 && x < d.x1 && z >= d.z0 && z < d.z1) return d;
-  return DISTRICTS[3];
-}
-
-export const RANKS = [
-  { name: 'Nobody', need: 0 },
-  { name: 'Deckhand', need: 100 },
-  { name: 'Hustler', need: 300 },
-  { name: 'Shot Caller', need: 600 },
-  { name: 'Delta King', need: 1000 },
+// Two canals cut the city; bridges cross them. Boats live on the water.
+export const CANALS = [
+  { id: 'north', x: -60, z: -40, w: 26, len: 560, axis: 'x' }, // east-west canal
+  { id: 'south', x: 40, z: 80, w: 22, len: 560, axis: 'x' },
 ];
-export function rankFor(respect) {
-  let r = RANKS[0];
-  for (const cand of RANKS) if (respect >= cand.need) r = cand;
-  return r.name;
-}
+export const BRIDGES = [
+  { x: -190, z: -40, w: 14 }, { x: -20, z: -40, w: 14 }, { x: 150, z: -40, w: 14 },
+  { x: -190, z: 80, w: 12 }, { x: -30, z: 80, w: 12 }, { x: 170, z: 80, w: 12 },
+];
+export const MARINA = { x: 190, z: 170, boats: 6 };
 
-export const CREW_DEFS = [
-  { id: 'mara', name: 'Mara Voss', role: 'Driver', bonus: '+15% car speed & handling', color: '#e74c3c', recruit: 'Finish mission 1' },
-  { id: 'juno', name: 'Juno Park', role: 'Hacker', bonus: 'Wanted fades twice as fast', color: '#2ecc71', recruit: 'Finish mission 2' },
-  { id: 'tayo', name: 'Big Tayo', role: 'Muscle', bonus: '+50% gun damage, fights beside you', color: '#f39c12', recruit: 'Finish mission 5' },
-  { id: 'wren', name: 'Wren', role: 'Lookout', bonus: 'Police & roadblocks marked on map', color: '#9b59b6', recruit: 'Finish mission 7' },
+// Driving feel: weighty, arcade, driftable.
+export const DRIVE = {
+  accel: 16, brake: 34, reverseAccel: 10, maxSpeed: 46, maxReverse: 12,
+  steerMax: 0.62, steerSpeed: 2.6, grip: 3.4, driftGrip: 1.15,
+  handbrakeBleed: 0.55, drag: 0.35, offroadDrag: 1.4,
+  hitSpeedLoss: 0.72, hitDamage: 18, cameraShake: 0.5,
+  fovBase: 62, fovKick: 11, lookAhead: 7,
+};
+export const BOAT = { accel: 9, maxSpeed: 26, steer: 1.1, drag: 0.5, turn: 1.6 };
+export const PLAYER = { walk: 6, run: 10, hp: 100, jump: 0 };
+
+export const WANTED = {
+  decayPerSec: 0.06, stealCar: 1, shoot: 1, kill: 1, speedNearCop: 0.5,
+  roadblockAt: 3, heliAt: 4, maxStars: 5,
+  copCarSpeed: 34, heliSpeed: 40, spawnRadius: 60,
+};
+
+export const ECONOMY = {
+  startCash: 650, startRespect: 0,
+  ranks: ['Nobody', 'Hustler', 'Runner', 'Kingpin', 'Delta King'],
+  rankAt: [0, 150, 400, 800, 1400],
+  prices: { pistol: 450, pistolAmmo: 40, repair: 120, spray: 90, clinic: 150, boat: 2500 },
+  missionPay: [300, 450, 600, 750, 900, 1100, 1300, 1600, 2000, 2600],
+  respectPay: [40, 55, 70, 85, 100, 120, 140, 160, 190, 240],
+};
+
+// Crew of four. Each bonus is real and applied in the systems that use it.
+export const CREW = [
+  { id: 'mara', name: 'Mara', role: 'Driver', bonus: 'handling', text: '+12% top speed, +25% grip' },
+  { id: 'juno', name: 'Juno', role: 'Hacker', bonus: 'hacker', text: '−30% heist timers' },
+  { id: 'bram', name: 'Bram', role: 'Muscle', bonus: 'muscle', text: '+50 max HP' },
+  { id: 'sable', name: 'Sable', role: 'Lookout', bonus: 'lookout', text: 'wanted warning + faster decay' },
 ];
 
-// Steps: goto {x,z} | collect {x,z,count} | kill {x,z,count} | survive {time,stars}
-//        race {points:[[x,z]...]} | tail {x,z} | escape {x,z}
+// Ten story missions, a chain across the delta.
 export const MISSIONS = [
-  { name: 'First Tide', giver: 'Mara Voss', pay: 300, respect: 100,
-    intro: 'You wash up in Tideline with nothing but a name. Mara needs a runner — meet her at Market Row.',
-    steps: [{ type: 'goto', x: 120, z: -120, text: 'Meet Mara at Market Row' }] },
-  { name: 'Hot Wheels', giver: 'Mara Voss', pay: 400, respect: 100,
-    intro: 'Mara needs wheels. Steal any traffic car (E) and bring it to the garage on Canal Quarter.',
-    steps: [
-      { type: 'steal', text: 'Steal a car — walk up to traffic and press E' },
-      { type: 'goto', x: -120, z: 120, text: 'Drive the car to Tia\'s Garage' }] },
-  { name: 'The Drop', giver: 'Juno Park', pay: 600, respect: 120,
-    intro: 'A package for the Marina, and the clock is already running. 90 seconds. No excuses.',
-    steps: [{ type: 'goto', x: -60, z: 215, time: 90, text: 'Deliver the package to the Marina — 90s' }] },
-  { name: 'Heat Wave', giver: 'Mara Voss', pay: 700, respect: 120,
-    intro: 'The cops are sweeping the Strip. Make noise, then survive 2 stars for 60 seconds.',
-    steps: [{ type: 'survive', time: 60, stars: 2, text: 'Survive 2 wanted stars for 60s' }] },
-  { name: 'Dockside Debt', giver: 'Big Tayo', pay: 900, respect: 150,
-    intro: 'The Docks crew owes Tayo money and answers with guns. Settle it at the Canal Quarter docks.',
-    steps: [{ type: 'kill', x: -180, z: 60, count: 4, text: 'Take out 4 Dock enforcers' }] },
-  { name: 'Canal Run', giver: 'Mara Voss', pay: 1000, respect: 150,
-    intro: 'A boat race through the canals. Grab a boat at the Marina and hit every checkpoint.',
-    steps: [{ type: 'race', points: [[-60, 30], [30, -60], [120, 30], [30, 180], [-120, 30]], text: 'Boat race — hit all 5 checkpoints' }] },
-  { name: 'Silent Partner', giver: 'Juno Park', pay: 1100, respect: 150,
-    intro: 'Tail the courier across the Neon Strip. Stay close, stay unseen — do not get spotted.',
-    steps: [{ type: 'tail', x: 120, z: 120, text: 'Tail the courier through the Neon Strip' }] },
-  { name: 'Marina Heist', giver: 'The Crew', pay: 2500, respect: 200, heist: 'marina',
-    intro: 'The big one: the Marina vault. Plan it first — Loud or Quiet, pick your crew, pick the getaway.',
-    steps: [
-      { type: 'collect', x: -60, z: 215, count: 3, text: 'Grab 3 vault crates at the Marina' },
-      { type: 'escape', x: -180, z: -180, text: 'Escape to the Old Town safehouse' }] },
-  { name: "The Commodore's Convoy", giver: 'Big Tayo', pay: 2000, respect: 200,
-    intro: 'The Commodore moves his money in a convoy down Market Row. Stop the lead car and take the case.',
-    steps: [
-      { type: 'kill', x: 120, z: -60, count: 3, text: 'Stop the convoy — take out 3 guards' },
-      { type: 'collect', x: 120, z: -60, count: 1, text: 'Grab the money case' }] },
-  { name: 'Delta King', giver: 'Tideline', pay: 5000, respect: 300,
-    intro: 'The Commodore himself, on the Neon Strip, with every cop in the city behind him. End it.',
-    steps: [
-      { type: 'kill', x: 120, z: 120, count: 6, text: 'Take out the Commodore\'s 6 enforcers' },
-      { type: 'survive', time: 45, stars: 4, text: 'Survive 4 wanted stars for 45s — become Delta King' }] },
+  { id: 1, name: 'First Light', giver: 'Mara', x: -150, z: -120, district: 'oldtown', text: 'Meet Mara in Old Town and take the courier job.', pay: 0, kind: 'goto' },
+  { id: 2, name: 'Hot Wheels', giver: 'Mara', x: 40, z: -140, district: 'market', text: 'Steal a car from Market Row and bring it to the garage.', pay: 1, kind: 'steal' },
+  { id: 3, name: 'River Run', giver: 'Juno', x: 150, z: 130, district: 'marina', text: 'Take a boat from the Marina and run the north canal.', pay: 2, kind: 'boat' },
+  { id: 4, name: 'Neon Nights', giver: 'Sable', x: 160, z: -40, district: 'neon', text: 'Lose a 2-star tail on the Neon Strip.', pay: 3, kind: 'evade' },
+  { id: 5, name: 'Warehouse Blues', giver: 'Bram', x: -140, z: 130, district: 'canal', text: 'Clear the Canal Quarter warehouse of rivals.', pay: 4, kind: 'combat' },
+  { id: 6, name: 'The Fixer', giver: 'Mara', x: 40, z: -140, district: 'market', text: 'Collect the package in Market Row and deliver it to Old Town.', pay: 5, kind: 'deliver' },
+  { id: 7, name: 'High Tide', giver: 'Juno', x: 150, z: 130, district: 'marina', text: 'Win the Tide Trial: 5 buoys, beat 75 seconds.', pay: 6, kind: 'trial' },
+  { id: 8, name: 'King of the Strip', giver: 'Sable', x: 160, z: -40, district: 'neon', text: 'Win a street race across the Neon Strip.', pay: 7, kind: 'race' },
+  { id: 9, name: 'Delta Kings', giver: 'Bram', x: -140, z: 130, district: 'canal', text: 'Defend the Canal Quarter safehouse from a raid.', pay: 8, kind: 'defend' },
+  { id: 10, name: 'The Last Tide', giver: 'Mara', x: -150, z: -120, district: 'oldtown', text: 'The final job: hit the convoy and bring it home.', pay: 9, kind: 'finale' },
 ];
 
+// Two staged heists with a planning phase: Loud or Quiet.
 export const HEISTS = [
-  { id: 'marina', name: 'Marina Vault', cut: 2500, desc: 'Crack the vault under the Marina. Loud brings the cops; Quiet needs Juno.' },
-  { id: 'neon', name: 'Neon Casino', cut: 4000, desc: 'The casino cage on the Neon Strip. Unlocks after mission 6 — talk to Mara at the safehouse.', unlockMission: 6 },
+  {
+    id: 'vault', name: 'The Vault Job', x: 160, z: -40, district: 'neon',
+    loud: { time: 150, guards: 8, pay: 4200 }, quiet: { time: 240, guards: 3, pay: 5200 },
+    text: 'Crack the Neon Strip vault. Loud is fast and hot; Quiet pays more.',
+  },
+  {
+    id: 'harbor', name: 'Harbor Nights', x: 150, z: 130, district: 'marina',
+    loud: { time: 120, guards: 6, pay: 3600 }, quiet: { time: 200, guards: 2, pay: 4600 },
+    text: 'Lift the cargo off the Marina docks before the tide turns.',
+  },
 ];
 
-export const SHOPS = [
-  { id: 'gun', name: 'Ironworks Gun Shop', x: 60, z: -180, color: '#e74c3c', desc: 'Pistol $500 · Ammo $50' },
-  { id: 'garage', name: "Tia's Garage", x: -120, z: 120, color: '#f39c12', desc: 'Turbo $800 · Armor $600 · Grip $400' },
-  { id: 'spray', name: 'Spray Shop', x: 180, z: 60, color: '#2ecc71', desc: 'Clean record $200' },
-  { id: 'clinic', name: 'Clinic', x: -180, z: -60, color: '#ecf0f1', desc: 'Full heal $150' },
-  { id: 'safehouse', name: 'Safehouse', x: -180, z: -180, color: '#9b59b6', desc: 'Save · Heist board · Crew jobs' },
+// Tide Trial: 5 orange buoys on a water-only course.
+export const TRIAL = {
+  buoys: [
+    { x: 200, z: 150 }, { x: 210, z: 60 }, { x: 120, z: -40 },
+    { x: -20, z: -40 }, { x: -120, z: -40 },
+  ],
+  start: { x: 190, z: 170 }, par: 75, pay: 300, respect: 25,
+};
+
+export const RADIO = [
+  { id: 'delta', name: 'DELTA FM', desc: 'sunset synth', wave: 'sawtooth', bpm: 96, root: 110 },
+  { id: 'neon', name: 'NEON 88', desc: 'night drive electro', wave: 'square', bpm: 122, root: 130.8 },
+  { id: 'tide', name: 'TIDE RADIO', desc: 'lazy delta blues', wave: 'triangle', bpm: 72, root: 98 },
 ];
 
-export const SAVE_KEY = 'tideline-delta-kings-save-v1';
+export const SAFEHOUSE = { x: -150, z: -100, district: 'oldtown' };
+export const SHOPS = {
+  gun: { x: 30, z: -120, name: 'Gun Shop' },
+  garage: { x: 60, z: -150, name: 'Garage' },
+  spray: { x: -120, z: -140, name: 'Spray Shop' },
+  clinic: { x: 140, z: 110, name: 'Clinic' },
+};

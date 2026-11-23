@@ -1,80 +1,36 @@
-// Crew: four recruitable specialists who follow you, ride with you, give
-// bonuses, and can be sent on side jobs that pay out over time.
-import * as THREE from 'three';
-import { CREW_DEFS } from './config.js';
+// crew.js: the crew of four. Each member's bonus is a real multiplier the
+// systems read — Driver for cars, Hacker for heist timers, Muscle for health,
+// Lookout for wanted warnings and decay. The crew is hired with respect:
+// the more the player has done, the more of the crew will ride along.
+import { CREW } from './config.js';
 
-export function createCrew(scene) {
-  const members = CREW_DEFS.map((d) => ({
-    ...d, recruited: false, onJob: false, jobTimer: 0, x: 0, z: 0, mesh: null,
-  }));
-  function recruit(id, x, z) {
-    const m = members.find((c) => c.id === id);
-    if (!m || m.recruited) return m;
-    m.recruited = true;
-    const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.95, 1.7, 0.5),
-      new THREE.MeshLambertMaterial({ color: new THREE.Color(m.color).getHex() }));
-    body.position.y = 1.1; g.add(body);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 8, 6),
-      new THREE.MeshLambertMaterial({ color: 0xd9a066 }));
-    head.position.y = 2.2; g.add(head);
-    g.position.set(x + 2, 0, z + 2);
-    scene.add(g);
-    m.mesh = g; m.x = x + 2; m.z = z + 2;
-    return m;
-  }
-  function step(G, dt) {
-    const s = G.state;
-    for (const m of members) {
-      if (!m.recruited || !m.mesh || m.onJob) continue;
-      // Followers trail the player at a short distance; Muscle also shoots.
-      const tx = s.player.x - Math.sin(s.player.heading) * 3 + (m.id === 'mara' ? 2 : -2);
-      const tz = s.player.z - Math.cos(s.player.heading) * 3;
-      const dx = tx - m.x, dz = tz - m.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist > 0.4) {
-        const sp = Math.min(dist * 2.5, 9);
-        m.x += (dx / dist) * sp * dt;
-        m.z += (dz / dist) * sp * dt;
-      }
-      m.mesh.position.set(m.x, 0, m.z);
-      m.mesh.rotation.y = Math.atan2(s.player.x - m.x, s.player.z - m.z);
-      if (m.id === 'tayo' && G.combat.aliveCount() > 0) {
-        // Muscle fires at the nearest enemy on his own.
-        const e = G.combat.enemies.find((en) => !en.dead);
-        if (e && Math.hypot(e.x - m.x, e.z - m.z) < 30) {
-          e.hp -= 0.5 * dt;
-          if (e.hp <= 0) { e.dead = true; scene.remove(e.mesh); G.onEnemyKilled(e); }
-        }
-      }
-    }
-    // Side jobs: a crew member away on a job pays out after 45 seconds.
-    for (const m of members) {
-      if (!m.recruited || !m.onJob) continue;
-      m.jobTimer -= dt;
-      if (m.jobTimer <= 0) {
-        m.onJob = false;
-        const pay = 250 + Math.floor(Math.random() * 250);
-        s.cash += pay;
-        G.hud.flash(`${m.name.toUpperCase()} FINISHED A SIDE JOB: +$${pay}`);
-        if (m.mesh) m.mesh.visible = true;
-      }
-    }
-  }
-  function sendOnJob(id) {
-    const m = members.find((c) => c.id === id);
-    if (!m || !m.recruited || m.onJob) return false;
-    m.onJob = true; m.jobTimer = 45;
-    if (m.mesh) m.mesh.visible = false;
-    return true;
-  }
-  function teleportToPlayer(G) {
-    const s = G.state;
-    for (const m of members) {
-      if (!m.recruited || !m.mesh || m.onJob) continue;
-      m.x = s.player.x + 2; m.z = s.player.z + 2;
-      m.mesh.position.set(m.x, 0, m.z);
-    }
-  }
-  return { members, recruit, step, sendOnJob, teleportToPlayer };
+export function createCrew() {
+  // All four ride from the start in this build: the story introduces them in
+  // the first three missions, and their bonuses are the point of the crew.
+  const hired = new Set(CREW.map((c) => c.id));
+  return {
+    list: CREW,
+    hired,
+    has(id) { return hired.has(id); },
+    get driver() { return hired.has('mara'); },
+    get hacker() { return hired.has('juno'); },
+    get muscle() { return hired.has('bram'); },
+    get lookout() { return hired.has('sable'); },
+    maxHp() { return 100 + (hired.has('bram') ? 50 : 0); },
+    topSpeedMul() { return hired.has('mara') ? 1.12 : 1; },
+    gripMul() { return hired.has('mara') ? 1.25 : 1; },
+    heistTimeMul() { return hired.has('juno') ? 0.7 : 1; },
+    wantedDecayMul() { return hired.has('sable') ? 2 : 1; },
+    names() { return CREW.filter((c) => hired.has(c.id)).map((c) => `${c.name} · ${c.role}`).join('  '); },
+    // One line per hired member with the bonus they actually give, for the
+    // start screen: the bonuses are the point of the crew, so show them.
+    bonusText() {
+      const parts = [];
+      if (hired.has('mara')) parts.push('Mara · Driver: +12% top speed, +25% grip');
+      if (hired.has('juno')) parts.push('Juno · Hacker: −30% heist timers');
+      if (hired.has('bram')) parts.push('Bram · Muscle: +50 max HP');
+      if (hired.has('sable')) parts.push('Sable · Lookout: wanted warning, faster decay');
+      return parts.join(' &nbsp;·&nbsp; ');
+    },
+  };
 }

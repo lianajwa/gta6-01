@@ -1,158 +1,138 @@
-// The 5-star wanted system: police cars chase and ram, foot cops close in to
-// bust, roadblocks appear at 3+ stars, a helicopter watches from 4+ stars.
-// Wanted fades when the player stays out of sight with no new crime.
+// police.js: the wanted system. Stars rise with crime and decay when the
+// player lays low. Roadblocks appear at 3 stars, a helicopter at 4+.
+// A Lookout in the crew warns the player early and speeds the decay.
 import * as THREE from 'three';
+import { WANTED } from './config.js';
 import { makeCarMesh } from './vehicles.js';
-import { ROADS } from './config.js';
 
-export function createPolice(scene, rng) {
-  const cars = [];
+export function createPolice(scene) {
   const cops = [];
-  let heli = null;
-  let heliLight = null;
-  let quietTimer = 0;
+  const state = {
+    stars: 0, heat: 0, // heat is the float behind the stars
+    roadblocks: [], heli: null, heliAngle: 0,
+    warned: false,
+  };
 
-  function spawnCar(x, z) {
-    const mesh = makeCarMesh(0x1a1a2e, true);
-    scene.add(mesh);
-    const c = { mesh, x, z, heading: 0, speed: 0, flash: 0 };
-    cars.push(c);
-    return c;
-  }
   function spawnCop(x, z) {
-    const mesh = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.7, 0.5),
-      new THREE.MeshLambertMaterial({ color: 0x1a2a6b }));
-    body.position.y = 1.1; mesh.add(body);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 8, 6),
-      new THREE.MeshLambertMaterial({ color: 0xd9a066 }));
-    head.position.y = 2.2; mesh.add(head);
+    const mesh = makeCarMesh(0x1a1a22, null);
+    // Police livery: white doors + light bar.
+    const door = new THREE.Mesh(new THREE.BoxGeometry(2.02, 0.4, 1.6), new THREE.MeshLambertMaterial({ color: 0xf2f2f2 }));
+    door.position.y = 0.55; mesh.add(door);
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, 0.4), new THREE.MeshBasicMaterial({ color: 0xff2a2a }));
+    bar.position.set(0, 1.45, -0.2); mesh.add(bar);
+    const bar2 = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, 0.4), new THREE.MeshBasicMaterial({ color: 0x2a6aff }));
+    bar2.position.set(0, 1.45, 0.3); mesh.add(bar2);
+    mesh.position.set(x, 0.1, z);
     scene.add(mesh);
-    const cop = { mesh, x, z, speed: 6.5 };
+    const cop = { mesh, x, z, heading: 0, speed: 0, stuck: 0 };
     cops.push(cop);
     return cop;
   }
+
   function spawnHeli() {
-    if (heli) return;
     const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.4, 4.5),
-      new THREE.MeshLambertMaterial({ color: 0x222831 }));
+    const body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.2, 5), new THREE.MeshLambertMaterial({ color: 0x1a1a22 }));
     g.add(body);
-    const rotor = new THREE.Mesh(new THREE.BoxGeometry(9, 0.12, 0.5),
-      new THREE.MeshLambertMaterial({ color: 0x555555 }));
-    rotor.position.y = 1; g.add(rotor);
-    g.userData.rotor = rotor;
-    const spot = new THREE.SpotLight(0xfff2b0, 60, 60, 0.4, 0.5);
-    spot.position.set(0, -1, 0);
-    g.add(spot); g.add(spot.target);
-    heliLight = spot;
+    const glass = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.8, 1.6), new THREE.MeshLambertMaterial({ color: 0x2a4a6a }));
+    glass.position.set(0, 0.2, 1.8); g.add(glass);
+    const rotor = new THREE.Mesh(new THREE.BoxGeometry(9, 0.08, 0.5), new THREE.MeshLambertMaterial({ color: 0x222226 }));
+    rotor.position.y = 1.1; g.add(rotor);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 4), new THREE.MeshLambertMaterial({ color: 0x1a1a22 }));
+    tail.position.set(0, 0.2, -4); g.add(tail);
+    const spot = new THREE.PointLight(0xfff2b0, 60, 60);
+    spot.position.y = -2; g.add(spot);
+    g.position.set(0, 55, 0);
     scene.add(g);
-    heli = g;
-  }
-  function removeHeli() {
-    if (!heli) return;
-    scene.remove(heli); heli = null; heliLight = null;
+    state.heli = { mesh: g, rotor, angle: 0 };
   }
 
-  function wantedCount(stars) {
-    if (stars <= 0) return { cars: 0, cops: 0 };
-    return { cars: Math.min(4, stars), cops: stars >= 2 ? Math.min(4, stars - 1) : 0 };
-  }
-
-  function step(G, dt) {
-    const s = G.state;
-    const px = s.player.x, pz = s.player.z;
-    // Decay: no crime for a while and no police close by -> stars fall.
-    if (s.wanted > 0) {
-      quietTimer += dt;
-      const nearPolice = cars.some((c) => Math.hypot(c.x - px, c.z - pz) < 45)
-        || cops.some((c) => Math.hypot(c.x - px, c.z - pz) < 30);
-      const decayRate = s.crew.find((c) => c.id === 'juno' && c.recruited) ? 2 : 1;
-      if (quietTimer > 14 && !nearPolice) {
-        s.wanted = Math.max(0, s.wanted - dt * 0.12 * decayRate);
-        if (s.wanted < 0.5) { s.wanted = 0; }
+  function setRoadblocks(on, playerX, playerZ) {
+    for (const r of state.roadblocks) scene.remove(r);
+    state.roadblocks = [];
+    if (!on) return;
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2 + 0.6;
+      const g = new THREE.Group();
+      for (let k = -1; k <= 1; k++) {
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.9, 0.7), new THREE.MeshLambertMaterial({ color: k === 0 ? 0xff6a00 : 0xf2f2f2 }));
+        bar.position.set(k * 3.6, 0.45, 0);
+        g.add(bar);
       }
+      g.position.set(playerX + Math.cos(a) * 46, 0, playerZ + Math.sin(a) * 46);
+      g.rotation.y = a + Math.PI / 2;
+      scene.add(g);
+      state.roadblocks.push(g);
     }
-    const stars = Math.ceil(s.wanted);
-    const want = wantedCount(stars);
-    // Spawn to match the wanted level.
-    while (cars.length < want.cars) {
-      const ang = rng.next() * Math.PI * 2;
-      spawnCar(px + Math.cos(ang) * 70, pz + Math.sin(ang) * 70);
-    }
-    while (cops.length < want.cops) {
-      const ang = rng.next() * Math.PI * 2;
-      spawnCop(px + Math.cos(ang) * 30, pz + Math.sin(ang) * 30);
-    }
-    // Despawn extras when wanted falls.
-    while (cars.length > want.cars) { const c = cars.pop(); scene.remove(c.mesh); }
-    while (cops.length > want.cops) { const c = cops.pop(); scene.remove(c.mesh); }
-    if (stars >= 4) spawnHeli(); else removeHeli();
+  }
 
-    // Police cars chase and ram.
-    for (const c of cars) {
-      const dx = px - c.x, dz = pz - c.z;
-      const dist = Math.hypot(dx, dz) || 1;
-      const targetHeading = Math.atan2(dx, dz);
-      let dh = targetHeading - c.heading;
-      while (dh > Math.PI) dh -= Math.PI * 2;
-      while (dh < -Math.PI) dh += Math.PI * 2;
-      c.heading += Math.max(-2.4 * dt, Math.min(2.4 * dt, dh));
-      c.speed = Math.min(30 + stars * 1.5, c.speed + 12 * dt);
-      c.x += Math.sin(c.heading) * c.speed * dt;
-      c.z += Math.cos(c.heading) * c.speed * dt;
-      c.mesh.position.set(c.x, 0, c.z);
-      c.mesh.rotation.y = c.heading;
-      c.flash += dt;
-      if (c.mesh.userData.lightBar) {
-        c.mesh.userData.lightBar.material.color.setHex(Math.floor(c.flash * 6) % 2 === 0 ? 0xff0000 : 0x0000ff);
+  return {
+    state, cops,
+    addHeat(n, lookout) {
+      state.heat = Math.min(WANTED.maxStars, state.heat + n);
+      if (lookout) state.warned = true;
+      this.sync();
+    },
+    sync() {
+      // Stars are the CEILING of heat: 3.0 heat is 3 stars until it decays
+      // below 2.0, and a single pistol shot (heat 1.0) shows 1 star until
+      // heat reaches 0. Flooring here dropped 2.995 heat to 2 stars.
+      const want = Math.min(WANTED.maxStars, Math.ceil(state.heat - 0.001));
+      if (want !== state.stars) {
+        state.stars = want;
+        const need = want >= 2 ? Math.min(want, 4) : want;
+        while (cops.length < need) {
+          const a = Math.random() * Math.PI * 2;
+          spawnCop(0 + Math.cos(a) * WANTED.spawnRadius, 0 + Math.sin(a) * WANTED.spawnRadius);
+        }
+        while (cops.length > need) {
+          const c = cops.pop();
+          scene.remove(c.mesh);
+        }
+        setRoadblocks(want >= WANTED.roadblockAt, 0, 0);
+        if (want >= WANTED.heliAt && !state.heli) spawnHeli();
+        if (want < WANTED.heliAt && state.heli) {
+          scene.remove(state.heli.mesh);
+          state.heli = null;
+        }
       }
-      if (dist < 3.2) {
-        // Ram: damage the player's car, or knock the player down on foot.
-        if (s.player.vehicle) s.player.vehicle.damage += 12 * dt;
-        else { s.health -= 14 * dt; G.hud.flash('RAMMED BY POLICE'); }
-        if (s.player.vehicle && s.player.vehicle.damage > 100) G.explodeVehicle();
+    },
+    update(dt, playerX, playerZ, playerSpeed, inVehicle, lookout) {
+      // Decay when slow and out of sight; Lookout doubles it.
+      const decay = WANTED.decayPerSec * (lookout ? 2 : 1) * (playerSpeed < 4 ? 1.6 : 0.5);
+      state.heat = Math.max(0, state.heat - decay * dt);
+      this.sync();
+      // Reposition roadblocks around the player as they move.
+      if (state.stars >= WANTED.roadblockAt) {
+        const moved = state.roadblocks.length && Math.hypot(state.roadblocks[0].position.x - playerX, state.roadblocks[0].position.z - playerZ) > 70;
+        if (moved) setRoadblocks(true, playerX, playerZ);
       }
-    }
-    // Foot cops close in; touching one starts the busted timer.
-    for (const c of cops) {
-      const dx = px - c.x, dz = pz - c.z;
-      const dist = Math.hypot(dx, dz) || 1;
-      c.x += (dx / dist) * c.speed * dt;
-      c.z += (dz / dist) * c.speed * dt;
-      c.mesh.position.set(c.x, 0, c.z);
-      c.mesh.rotation.y = Math.atan2(dx, dz);
-      if (dist < 2 && !s.player.vehicle) {
-        s.bustedTimer = (s.bustedTimer || 0) + dt;
-        if (s.bustedTimer > 2.5) G.busted();
-      } else if (dist > 4) s.bustedTimer = 0;
-    }
-    // Helicopter hovers above the player, spotlight on.
-    if (heli) {
-      heli.position.set(px + 12, 34, pz - 10);
-      heli.userData.rotor.rotation.y += dt * 18;
-      if (heliLight) heliLight.target.position.set(px, 0, pz);
-    }
-    // Roadblocks at 3+ stars: two police cars parked across the road ahead.
-    G.roadblock = stars >= 3;
-  }
-
-  function addWanted(G, amount) {
-    const s = G.state;
-    s.wanted = Math.min(5, s.wanted + amount);
-    quietTimer = 0;
-  }
-  function clear(G) {
-    for (const c of cars) scene.remove(c.mesh);
-    for (const c of cops) scene.remove(c.mesh);
-    cars.length = 0; cops.length = 0;
-    removeHeli();
-    quietTimer = 0;
-  }
-  return { step, addWanted, clear, cars, cops, get heli() { return heli; } };
-}
-
-export function roadblockAhead(G) {
-  // A roadblock is a pair of stopped police cars on the player's road ahead.
-  return G.roadblock && G.state.wanted >= 3;
+      // Cop cars chase the player; they are slower than a good getaway car.
+      for (const c of cops) {
+        const dx = playerX - c.x, dz = playerZ - c.z;
+        const d = Math.hypot(dx, dz);
+        const want = Math.atan2(dx, dz);
+        let dh = want - c.heading;
+        while (dh > Math.PI) dh -= Math.PI * 2;
+        while (dh < -Math.PI) dh += Math.PI * 2;
+        c.heading += THREE.MathUtils.clamp(dh, -2.2 * dt, 2.2 * dt);
+        c.speed += ((d > 12 ? WANTED.copCarSpeed : 0) - c.speed) * Math.min(1, dt);
+        c.x += Math.sin(c.heading) * c.speed * dt;
+        c.z += Math.cos(c.heading) * c.speed * dt;
+        c.mesh.position.set(c.x, 0.1, c.z);
+        c.mesh.rotation.y = c.heading;
+        // Busted when a cop car touches the player on foot at low speed.
+        if (d < 3.2 && !inVehicle && playerSpeed < 2) return 'busted';
+      }
+      // Helicopter circles above, its spotlight tracking the player.
+      if (state.heli) {
+        state.heli.angle += dt * 0.5;
+        const hx = playerX + Math.cos(state.heli.angle) * 26;
+        const hz = playerZ + Math.sin(state.heli.angle) * 26;
+        state.heli.mesh.position.set(hx, 52 + Math.sin(performance.now() * 0.001) * 2, hz);
+        state.heli.rotor.rotation.y += dt * 18;
+        state.heli.mesh.lookAt(playerX, 0, playerZ);
+      }
+      return null;
+    },
+  };
 }

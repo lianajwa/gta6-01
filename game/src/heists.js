@@ -1,37 +1,74 @@
-// Staged heists: a planning phase (approach, crew, getaway) followed by an
-// execution mission. Quiet needs Juno and brings fewer enemies; Loud pays the
-// same but starts the job hot with wanted stars already on you.
+// heists.js: two staged heists with a planning phase. The player picks Loud
+// (fast, more guards, less pay) or Quiet (slow, fewer guards, more pay) at a
+// planning board, then runs the stages. Juno the Hacker cuts every timer 30%.
 import { HEISTS } from './config.js';
 
-export function createHeists() {
+export function createHeists(onEvent) {
+  const state = {
+    planning: null, // heist being planned
+    active: null, // {heist, plan, stage, timer, guardsLeft}
+    done: {}, // heist id -> 'loud' | 'quiet'
+  };
+
+  function planTime(heist, plan, hacker) {
+    const base = heist[plan].time;
+    return hacker ? Math.round(base * 0.7) : base;
+  }
+
   return {
-    list() { return HEISTS; },
-    byId(id) { return HEISTS.find((h) => h.id === id); },
-    available(G) {
-      return HEISTS.filter((h) => h.unlockMission === undefined || G.state.missionIndex > h.unlockMission);
+    state,
+    openPlanning(heistId) {
+      const h = HEISTS.find((x) => x.id === heistId);
+      if (!h || state.done[h.id] || state.active) return null;
+      state.planning = h;
+      onEvent({ type: 'heist-plan', heist: h });
+      return h;
     },
-    // Apply the chosen plan to the game state; returns a summary line.
-    applyPlan(G, heistId, plan) {
-      const s = G.state;
-      s.heistPlan = { heist: heistId, approach: plan.approach, crew: plan.crew, getaway: plan.getaway };
-      const h = this.byId(heistId);
-      if (plan.approach === 'loud') {
-        G.police.addWanted(G, 2);
-        for (let i = 0; i < 3; i++) G.combat.spawnEnemy(-60 + i * 8, 215 + (i % 2) * 6);
-      } else {
-        // Quiet: Juno kills the cameras, so the job starts cold.
-        if (!s.crew.find((c) => c.id === 'juno' && c.recruited)) {
-          G.hud.flash('QUIET NEEDS JUNO — SWITCHING TO LOUD');
-          s.heistPlan.approach = 'loud';
-          G.police.addWanted(G, 2);
-        }
+    closePlanning() { state.planning = null; },
+    startPlan(plan, hacker) {
+      const h = state.planning;
+      if (!h) return null;
+      if (plan !== 'loud' && plan !== 'quiet') return null; // unknown plan
+      const time = planTime(h, plan, hacker);
+      state.active = { heist: h, plan, stage: 1, timer: time, guardsLeft: h[plan].guards, total: time };
+      state.planning = null;
+      onEvent({ type: 'heist-start', heist: h, plan, time });
+      return state.active;
+    },
+    update(dt, ctx) {
+      const a = state.active;
+      if (!a) return null;
+      a.timer -= dt;
+      if (a.guardsLeft <= 0 && a.stage === 1) {
+        a.stage = 2;
+        onEvent({ type: 'heist-stage', heist: a.heist, stage: 2 });
       }
-      return `${h.name}: ${s.heistPlan.approach.toUpperCase()} approach, getaway ${plan.getaway}`;
+      if (a.stage === 2 && ctx.atEscape) {
+        const pay = a.heist[a.plan].pay;
+        state.done[a.heist.id] = a.plan;
+        onEvent({ type: 'heist-done', heist: a.heist, plan: a.plan, pay });
+        const done = { heist: a.heist, plan: a.plan, pay };
+        state.active = null;
+        return done;
+      }
+      if (a.timer <= 0) {
+        onEvent({ type: 'heist-failed', heist: a.heist });
+        state.active = null;
+        return { failed: a.heist };
+      }
+      return null;
     },
-    planSummary(G) {
-      const p = G.state.heistPlan;
-      if (!p) return 'No heist planned';
-      return `${p.heist} · ${p.approach} · crew ${p.crew.join(', ') || 'solo'} · getaway ${p.getaway}`;
+    guardDown() {
+      if (state.active) state.active.guardsLeft = Math.max(0, state.active.guardsLeft - 1);
     },
+    statusText() {
+      if (state.active) {
+        const a = state.active;
+        return `HEIST: ${a.heist.name} (${a.plan}) — stage ${a.stage}/2 — ${Math.ceil(a.timer)}s — guards ${a.guardsLeft}`;
+      }
+      if (state.planning) return `Plan ${state.planning.name}: LOUD or QUIET?`;
+      return null;
+    },
+    list() { return HEISTS; },
   };
 }

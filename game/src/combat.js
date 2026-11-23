@@ -1,134 +1,99 @@
-// Combat: the pistol (bought at Ironworks), enemy enforcers who shoot back,
-// punches, health and armor, tracers and hit flashes.
+// combat.js: the pistol. Raycast-free on purpose — a hit test against the
+// nearest enemy inside a forward cone keeps it deterministic and cheap.
+// Shooting raises the wanted level; killing an enemy pays a little respect.
+// Enemy fire timers run on a SEEDED rng (passed in), never Math.random, so
+// a run is reproducible from the seed.
 import * as THREE from 'three';
+import { makeRng } from './random.js';
 
-export function createCombat(scene) {
-  const enemies = [];
+export function createCombat(scene, rng = makeRng(9917)) {
+  const tracerMat = new THREE.MeshBasicMaterial({ color: 0xffe14d });
   const tracers = [];
-  const pickups = [];
-
-  function spawnEnemy(x, z, hp = 3) {
-    const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(1, 1.8, 0.6),
-      new THREE.MeshLambertMaterial({ color: 0x8b1a1a }));
-    body.position.y = 1.2; g.add(body);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 6),
-      new THREE.MeshLambertMaterial({ color: 0xd9a066 }));
-    head.position.y = 2.4; g.add(head);
-    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.9),
-      new THREE.MeshLambertMaterial({ color: 0x111111 }));
-    gun.position.set(0.4, 1.3, 0.4); g.add(gun);
-    scene.add(g);
-    const e = { mesh: g, x, z, hp, shootTimer: 1 + Math.random() * 2, dead: false };
-    enemies.push(e);
-    return e;
-  }
-  function spawnPickup(x, z, kind = 'cash') {
-    const color = kind === 'health' ? 0x2ecc71 : 0xf2c14e;
-    const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshLambertMaterial({ color }));
-    m.position.set(x, 0.8, z);
-    scene.add(m);
-    const p = { mesh: m, x, z, kind };
-    pickups.push(p);
-    return p;
-  }
-  function tracer(from, to, color = 0xffe9a8) {
-    const geo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(from.x, from.y, from.z),
-      new THREE.Vector3(to.x, to.y, to.z),
-    ]);
-    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color }));
-    scene.add(line);
-    tracers.push({ line, life: 0.12 });
-  }
-  function step(G, dt) {
-    const s = G.state;
-    const px = s.player.x, pz = s.player.z;
-    for (const e of enemies) {
-      if (e.dead) continue;
-      const dx = px - e.x, dz = pz - e.z;
-      const dist = Math.hypot(dx, dz) || 1;
-      // Enforcers advance to firing range, then shoot with inaccuracy.
-      if (dist > 14) {
-        e.x += (dx / dist) * 5 * dt;
-        e.z += (dz / dist) * 5 * dt;
+  return {
+    ammo: 12, hasPistol: false, cooldown: 0,
+    enemies: [], // {mesh, x, z, hp, alive}
+    spawnEnemy(sceneRef, x, z) {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.4, 1.15, 8), new THREE.MeshLambertMaterial({ color: 0x3a3a40 }));
+      body.position.y = 0.95; g.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 10, 8), new THREE.MeshLambertMaterial({ color: 0xc98a5a }));
+      head.position.y = 1.78; g.add(head);
+      const gun = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.7), new THREE.MeshLambertMaterial({ color: 0x14141a }));
+      gun.position.set(0.3, 1.1, 0.4); g.add(gun);
+      g.position.set(x, 0, z);
+      sceneRef.add(g);
+      const e = { mesh: g, x, z, hp: 3, alive: true, shootT: 2 + rng.range(0, 2) };
+      this.enemies.push(e);
+      return e;
+    },
+    clearEnemies(sceneRef) {
+      for (const e of this.enemies) sceneRef.remove(e.mesh);
+      this.enemies = [];
+    },
+    // Fire from (ox, oz) along heading. Returns 'hit' | 'kill' | 'miss' | 'empty'.
+    fire(ox, oz, heading, dt) {
+      if (this.cooldown > 0) return 'cooling';
+      if (!this.hasPistol) return 'unarmed';
+      if (this.ammo <= 0) return 'empty';
+      this.cooldown = 0.28;
+      this.ammo--;
+      const dirX = Math.sin(heading), dirZ = Math.cos(heading);
+      let best = null, bestD = 26;
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        const dx = e.x - ox, dz = e.z - oz;
+        const along = dx * dirX + dz * dirZ;
+        if (along < 1 || along > bestD) continue;
+        const perp = Math.abs(dx * dirZ - dz * dirX);
+        if (perp < 1.6 && along < bestD) { best = e; bestD = along; }
       }
-      e.mesh.position.set(e.x, 0, e.z);
-      e.mesh.rotation.y = Math.atan2(dx, dz);
-      e.shootTimer -= dt;
-      if (e.shootTimer <= 0 && dist < 40) {
-        e.shootTimer = 1.2 + Math.random() * 1.2;
-        tracer({ x: e.x, y: 1.4, z: e.z }, { x: px + (Math.random() - 0.5) * 2, y: 1.2, z: pz + (Math.random() - 0.5) * 2 }, 0xff5555);
-        const hit = Math.random() < 0.45;
-        if (hit) {
-          const dmg = 7;
-          if (s.armor > 0) { const ab = Math.min(s.armor, dmg); s.armor -= ab; s.health -= (dmg - ab); }
-          else s.health -= dmg;
-          G.hud.flash('HIT!');
-          if (s.health <= 0) G.wasted();
+      // Tracer: a thin bright box from the muzzle to the hit point.
+      const endX = ox + dirX * (best ? bestD : 24);
+      const endZ = oz + dirZ * (best ? bestD : 24);
+      const len = Math.hypot(endX - ox, endZ - oz);
+      const tr = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, len), tracerMat);
+      tr.position.set((ox + endX) / 2, 1.35, (oz + endZ) / 2);
+      tr.rotation.y = Math.atan2(endX - ox, endZ - oz);
+      scene.add(tr);
+      tracers.push({ mesh: tr, life: 0.09 });
+      if (best) {
+        best.hp--;
+        if (best.hp <= 0) {
+          best.alive = false;
+          best.mesh.visible = false;
+          return 'kill';
+        }
+        return 'hit';
+      }
+      return 'miss';
+    },
+    update(dt, playerX, playerZ) {
+      if (this.cooldown > 0) this.cooldown -= dt;
+      for (let i = tracers.length - 1; i >= 0; i--) {
+        tracers[i].life -= dt;
+        if (tracers[i].life <= 0) {
+          scene.remove(tracers[i].mesh);
+          tracers.splice(i, 1);
         }
       }
-    }
-    for (const p of pickups) {
-      p.mesh.rotation.y += dt * 2;
-      p.mesh.position.y = 0.8 + Math.sin(performance.now() * 0.003 + p.x) * 0.15;
-      if (Math.hypot(p.x - px, p.z - pz) < 2.2) {
-        if (p.kind === 'health') { s.health = Math.min(100, s.health + 40); G.hud.flash('+40 HEALTH'); }
-        else if (p.kind === 'heist') { s.heistCollected = (s.heistCollected || 0) + 1; G.hud.flash(`HEIST CRATE ${s.heistCollected}/3`); }
-        else { s.cash += 150; s.collected = (s.collected || 0) + 1; G.hud.flash('+$150 STREET CASH'); }
-        scene.remove(p.mesh);
-        p.taken = true;
+      // Enemies shuffle toward the player and shoot back (badly).
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        const dx = playerX - e.x, dz = playerZ - e.z;
+        const d = Math.hypot(dx, dz);
+        if (d > 3 && d < 40) {
+          e.x += (dx / d) * 2.2 * dt;
+          e.z += (dz / d) * 2.2 * dt;
+          e.mesh.position.set(e.x, 0, e.z);
+          e.mesh.rotation.y = Math.atan2(dx, dz);
+        }
+        e.shootT -= dt;
+        if (e.shootT <= 0 && d < 30) {
+          e.shootT = 2.5 + rng.range(0, 2);
+          return { enemyShot: true, from: e };
+        }
       }
-    }
-    for (let i = pickups.length - 1; i >= 0; i--) if (pickups[i].taken) pickups.splice(i, 1);
-    for (let i = tracers.length - 1; i >= 0; i--) {
-      tracers[i].life -= dt;
-      if (tracers[i].life <= 0) { scene.remove(tracers[i].line); tracers.splice(i, 1); }
-    }
-  }
-  // Shoot from the player toward the aim point. Returns the enemy hit, if any.
-  function shoot(G, aimX, aimZ) {
-    const s = G.state;
-    if (!s.pistol) { G.hud.flash('NO PISTOL — BUY ONE AT IRONWORKS'); return null; }
-    if (s.ammo <= 0) { G.hud.flash('NO AMMO — BUY AMMO AT IRONWORKS'); return null; }
-    s.ammo -= 1;
-    G.audio.shot();
-    const px = s.player.x, pz = s.player.z;
-    const dx = aimX - px, dz = aimZ - pz;
-    const len = Math.hypot(dx, dz) || 1;
-    const dirX = dx / len, dirZ = dz / len;
-    tracer({ x: px, y: 1.4, z: pz }, { x: px + dirX * 45, y: 1.4, z: pz + dirZ * 45 });
-    let best = null, bd = 45;
-    const muscle = s.crew.find((c) => c.id === 'tayo' && c.recruited);
-    const dmg = muscle ? 1.5 : 1;
-    for (const e of enemies) {
-      if (e.dead) continue;
-      // Distance from the enemy to the shot ray.
-      const ex = e.x - px, ez = e.z - pz;
-      const along = ex * dirX + ez * dirZ;
-      if (along < 0 || along > 45) continue;
-      const perp = Math.abs(ex * dirZ - ez * dirX);
-      if (perp < 1.6 && along < bd) { bd = along; best = e; }
-    }
-    if (best) {
-      best.hp -= dmg;
-      best.mesh.children[0].material.color.setHex(0xffcc00);
-      window.setTimeout(() => { if (!best.dead) best.mesh.children[0].material.color.setHex(0x8b1a1a); }, 120);
-      if (best.hp <= 0) {
-        best.dead = true;
-        scene.remove(best.mesh);
-        G.onEnemyKilled(best);
-      }
-    }
-    return best;
-  }
-  function clear() {
-    for (const e of enemies) scene.remove(e.mesh);
-    for (const p of pickups) scene.remove(p.mesh);
-    for (const t of tracers) scene.remove(t.line);
-    enemies.length = 0; pickups.length = 0; tracers.length = 0;
-  }
-  function aliveCount() { return enemies.filter((e) => !e.dead).length; }
-  return { spawnEnemy, spawnPickup, step, shoot, clear, aliveCount, enemies, pickups };
+      return null;
+    },
+  };
 }

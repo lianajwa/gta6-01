@@ -1,14 +1,33 @@
-// Seeded RNG (mulberry32) so ?seed=N replays the same city and traffic.
-export function createRandom(seed) {
+// Seeded random: mulberry32. The whole city is generated from one seed so the
+// world is identical on every load and every screenshot is reproducible.
+export function mulberry32(seed) {
   let a = seed >>> 0;
-  return {
-    next() {
-      a |= 0; a = (a + 0x6d2b79f5) | 0;
-      let t = Math.imul(a ^ (a >>> 15), 1 | a);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    },
-    int(min, max) { return min + Math.floor(this.next() * (max - min + 1)); },
-    pick(arr) { return arr[Math.floor(this.next() * arr.length)]; },
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+export function makeRng(seed) {
+  const next = mulberry32(seed);
+  return {
+    next,
+    range(min, max) { return min + next() * (max - min); },
+    int(min, max) { return Math.floor(min + next() * (max - min + 1)); },
+    pick(arr) { return arr[Math.floor(next() * arr.length)]; },
+    chance(p) { return next() < p; },
+    // A deterministic sub-stream: same label, same numbers, whatever the
+    // parent stream has already drawn. Systems that need their own random
+    // (enemy fire timers) fork one instead of sharing Math.random.
+    fork(label) { return makeRng(hashSeed(String(label))); },
+  };
+}
+
+// A tiny deterministic hash of a string, used to seed per-district variation.
+export function hashSeed(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
 }

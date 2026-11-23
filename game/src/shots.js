@@ -1,77 +1,50 @@
-// Screenshot scenes behind ?shot=start|drive|chase|heist. Each one stages a real
-// game state (real city, real traffic, real police, real crew) and lets the
-// normal loop run it, so the frame is what playing really looks like and the
-// same seed always gives the same frame.
-export function stageShot(G, name) {
-  const s = G.state;
-  G.hud.hideAllOverlays();
-  // Start from a fresh game so the HUD numbers are deterministic.
-  G.state.cash = 2450;
-  G.state.respect = 320;
-  G.state.health = 100;
-  G.state.armor = 50;
-  G.state.pistol = true;
-  G.state.ammo = 48;
+// shots.js: deterministic screenshot poses. The game reads ?shot=<name>&seed=1
+// and, before the first rendered frame, teleports the player/camera and sets
+// the world state for that shot — so headless Chromium produces the same
+// frame every time. Poses show the game at its best: on foot, driving,
+// a wanted chase, and a heist at the marina.
+export const SHOTS = {
+  start: {
+    mode: 'foot', x: -140, z: -90, heading: 0.5, cam: 'follow',
+    wanted: 0, mission: 1, text: 'dusk avenue, on foot',
+  },
+  drive: {
+    mode: 'car', x: -30, z: 80, heading: Math.PI / 2, cam: 'chase',
+    wanted: 0, speed: 30, text: 'red car on the bridge, water both sides',
+  },
+  chase: {
+    mode: 'car', x: 60, z: -60, heading: -0.6, cam: 'chase',
+    wanted: 3, speed: 34, text: 'wanted 3, police car ahead',
+  },
+  heist: {
+    mode: 'foot', x: 175, z: 160, heading: -2.2, cam: 'wide',
+    wanted: 0, heist: 'harbor', text: 'marina, boats, heist pillar, crew',
+  },
+};
 
-  if (name === 'start') {
-    s.player.x = 60; s.player.z = 200; s.player.heading = Math.PI;
-    G.screen = 'title';
-    const cont = document.getElementById('btn-continue');
-    if (cont) cont.style.display = 'none';
-    G.hud.show('title');
-    return;
-  }
+export function parseShot() {
+  const q = new URLSearchParams(location.search);
+  const name = q.get('shot');
+  const seed = Number(q.get('seed') || '1');
+  const selftest = q.get('selftest') === '1';
+  return { name: SHOTS[name] ? name : null, shot: SHOTS[name] || null, seed, selftest };
+}
 
-  G.screen = 'play';
-  if (name === 'drive') {
-    // Driving up road x=60 toward the bridge over the east-west canal.
-    const car = G.vehicles.makePlayerCar(60, -70, 0, 0xd64545);
-    car.speed = 12;
-    s.player.vehicle = { type: 'car', ref: car };
-    s.player.onFoot = false;
-    s.player.x = 60; s.player.z = -70; s.player.heading = 0;
-    s.missionIndex = 2;
-    s.missionStep = 0;
-    s.missionTimer = 74;
-    G.crew.recruit('mara', 60, -74);
-    return;
+// Apply a pose to the live game state. Called once, before the first frame.
+export function applyShot(game, shotName) {
+  const s = SHOTS[shotName];
+  if (!s || !game) return false;
+  const g = game;
+  if (s.mode === 'car') {
+    g.enterVehicle('car', s.x, s.z, s.heading, 0xd83a2e);
+    g.vehicle.speed = s.speed ?? 20;
+  } else {
+    g.placePlayer(s.x, s.z, s.heading);
   }
-
-  if (name === 'chase') {
-    const car = G.vehicles.makePlayerCar(0, -70, 0, 0x4578d6);
-    car.speed = 20;
-    s.player.vehicle = { type: 'car', ref: car };
-    s.player.onFoot = false;
-    s.player.x = 0; s.player.z = -70; s.player.heading = 0;
-    s.wanted = 3;
-    s.missionIndex = 3;
-    s.missionStep = 0;
-    s.missionTimer = 41;
-    G.crew.recruit('mara', 2, -74);
-    G.crew.recruit('juno', -2, -74);
-    // Let the police system spawn its chase cars and run them in for 1.5s,
-    // then pull two of them up alongside the player so the chase is in frame.
-    for (let i = 0; i < 90; i++) G.police.step(G, 1 / 60);
-    if (G.police.cars[0]) { G.police.cars[0].x = -9; G.police.cars[0].z = -45; }
-    if (G.police.cars[1]) { G.police.cars[1].x = 11; G.police.cars[1].z = -38; }
-    return;
-  }
-
-  // heist (default for anything else): the Marina Heist in progress with crew.
-  // Player faces +z, toward the Marina water, docks and boats.
-  s.player.x = -60; s.player.z = 205; s.player.heading = 0;
-  s.missionIndex = 7;
-  s.missionStep = 0;
-  s.collected = 1;
-  s.wanted = 0;
-  s.heistPlan = { heist: 'marina', approach: 'quiet', crew: ['mara', 'juno', 'tayo'], getaway: 'boat' };
-  G.crew.recruit('mara', -63, 202);
-  G.crew.recruit('juno', -57, 202);
-  // No Muscle here: Tayo would shoot the enforcers dead during staging.
-  for (let i = 0; i < 3; i++) {
-    const e = G.combat.spawnEnemy(-60 + i * 9 - 9, 222);
-    e.shootTimer = 10; // hold fire while the shot is taken
-  }
-  for (let i = 0; i < 3; i++) G.combat.spawnPickup(-60 + i * 4 - 4, 215, 'cash');
-  G.hud.flash('MARINA HEIST: GRAB 3 VAULT CRATES');
+  if (s.wanted) g.setWanted(s.wanted);
+  if (s.mission) g.gotoMission(s.mission);
+  if (s.heist) g.openHeist(s.heist);
+  g.cameraMode = s.cam;
+  g.shotPose = shotName;
+  return true;
 }
